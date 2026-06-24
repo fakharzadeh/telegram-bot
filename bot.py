@@ -23,9 +23,9 @@ user_histories = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "سلام! 👋 من یه دستیار هوشمند هستم.\n"
-        "هر سوالی داری بپرس، خوشحال می‌شم کمک کنم! 😊\n\n"
-        "برای شروع مکالمه جدید بنویس: /new"
+        "سلام! 🌙 من ربات تعبیر خواب هستم.\n"
+"خوابت رو برام تعریف کن تا تعبیرش کنم! 😊\n\n"
+"برای شروع مکالمه جدید بنویس: /new"
     )
 
 async def new_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -50,7 +50,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # شروع چت با تاریخچه
         chat = model.start_chat(history=user_histories[user_id])
-        response = chat.send_message(user_message)
+        system_prompt = "تو یک متخصص تعبیر خواب هستی. فقط و فقط تعبیر خواب انجام می‌دی. اگه کسی چیز دیگه‌ای پرسید، مودبانه بگو که فقط تعبیر خواب بلدی. جواب‌هات رو به فارسی روان و کامل بده."
+response = chat.send_message(f"{system_prompt}\n\nخواب کاربر: {user_message}")
         reply = response.text
 
         # ذخیره تاریخچه
