@@ -51,7 +51,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(reply)
 
     except Exception as e:
-        logging.error(f"خطا: {e}")
+        logging.error(f"خطا: {e}", exc_info=True)
+        await update.message.reply_text(f"خطا: {str(e)}")
         await update.message.reply_text(
             "متأسفم، یه مشکلی پیش اومد. دوباره امتحان کن یا /new بنویس."
         )
