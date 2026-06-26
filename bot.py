@@ -15,7 +15,6 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 IDPAY_API_KEY = os.environ.get("IDPAY_API_KEY")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
-
 IDPAY_CALLBACK_URL = os.environ.get("CALLBACK_URL", "https://yourdomain.com/callback")
 
 genai.configure(api_key=GEMINI_API_KEY)
@@ -34,18 +33,24 @@ PACKAGES = [
 
 def load_users():
     if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
     return {}
 
 def save_users(users):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=2)
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(users, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.error(f"خطا در ذخیره: {e}")
 
 def get_user(users, user_id):
     uid = str(user_id)
     if uid not in users:
-        users[uid] = {"credits": FREE_CREDITS, "history": [], "pending": {}}
+        users[uid] = {"credits": FREE_CREDITS, "pending": {}}
     if "pending" not in users[uid]:
         users[uid]["pending"] = {}
     return users[uid]
@@ -62,6 +67,9 @@ def package_keyboard():
     keyboard = [[KeyboardButton(p["label"])] for p in PACKAGES]
     keyboard.append([KeyboardButton("🔙 بازگشت")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+# نگه‌داری تاریخچه مکالمه در حافظه (نه فایل)
+chat_sessions = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = load_users()
@@ -81,7 +89,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = load_users()
     user = get_user(users, user_id)
 
-    # دکمه‌های منو
     if text == "📖 درباره تعبیر خواب":
         await update.message.reply_text(
             "🌙 *درباره تعبیر خواب*\n\n"
@@ -96,8 +103,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "🌙 خواب جدید":
-        user["history"] = []
-        save_users(users)
+        if user_id in chat_sessions:
+            del chat_sessions[user_id]
         await update.message.reply_text(
             "🌙 آماده‌ام! خواب جدیدت رو برام تعریف کن:",
             reply_markup=main_keyboard()
@@ -141,7 +148,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # انتخاب پکیج
     for pkg in PACKAGES:
         if text == pkg["label"]:
             if not IDPAY_API_KEY:
@@ -151,16 +157,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=main_keyboard()
                 )
                 return
-
             try:
+                import time
                 response = requests.post(
                     "https://api.idpay.ir/v1.1/payment",
-                    headers={
-                        "X-API-KEY": IDPAY_API_KEY,
-                        "Content-Type": "application/json"
-                    },
+                    headers={"X-API-KEY": IDPAY_API_KEY, "Content-Type": "application/json"},
                     json={
-                        "order_id": f"{user_id}_{pkg['id']}_{int(__import__('time').time())}",
+                        "order_id": f"{user_id}_{pkg['id']}_{int(time.time())}",
                         "amount": pkg["amount"],
                         "callback": IDPAY_CALLBACK_URL,
                         "desc": f"خرید {pkg['count']} تعبیر خواب"
@@ -168,13 +171,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 data = response.json()
                 if "link" in data:
-                    payment_id = data.get("id", "")
-                    user["pending"][payment_id] = pkg["count"]
+                    user["pending"][data.get("id", "")] = pkg["count"]
                     save_users(users)
                     await update.message.reply_text(
-                        f"✅ *لینک پرداخت آماده‌ست:*\n\n"
-                        f"پکیج: {pkg['label']}\n\n"
-                        f"🔗 {data['link']}\n\n"
+                        f"✅ *لینک پرداخت:*\n\n{data['link']}\n\n"
+                        f"پکیج: {pkg['label']}\n"
                         "بعد از پرداخت، اعتبار به حسابت اضافه می‌شه.",
                         parse_mode="Markdown",
                         reply_markup=main_keyboard()
@@ -193,8 +194,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # تعبیر خواب
     if user["credits"] <= 0:
         await update.message.reply_text(
-            "⚠️ اعتبار شما تموم شده!\n\n"
-            "برای ادامه، اعتبار بخر 👇",
+            "⚠️ اعتبار شما تموم شده!\n\nبرای ادامه، اعتبار بخر 👇",
             reply_markup=package_keyboard()
         )
         return
@@ -202,10 +202,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     try:
-        chat = model.start_chat(history=user.get("history", []))
-        response = chat.send_message(f"{SYSTEM_PROMPT}\n\nخواب کاربر: {text}")
+        # استفاده از چت ساده بدون تاریخچه JSON
+        if user_id not in chat_sessions:
+            chat_sessions[user_id] = []
+
+        chat_sessions[user_id].append(f"کاربر: {text}")
+
+        full_prompt = SYSTEM_PROMPT + "\n\n" + "\n".join(chat_sessions[user_id][-6:])
+        response = model.generate_content(full_prompt)
         reply = response.text
-        user["history"] = chat.history
+
+        chat_sessions[user_id].append(f"ربات: {reply}")
+
         user["credits"] -= 1
         save_users(users)
 
@@ -242,7 +250,7 @@ async def add_credit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
     except:
-        await update.message.reply_text("❌ فرمت اشتباه.\nاستفاده: /addcredit [user_id] [amount]")
+        await update.message.reply_text("❌ فرمت: /addcredit [user_id] [amount]")
 
 async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
