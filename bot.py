@@ -56,7 +56,7 @@ def main_keyboard():
         [KeyboardButton("💳 استعلام اعتبار"), KeyboardButton("➕ افزایش اعتبار")],
         [KeyboardButton("🆘 پشتیبانی")]
     ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, persistent=True)
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
 def package_keyboard():
     keyboard = [[KeyboardButton(p["label"])] for p in PACKAGES]
