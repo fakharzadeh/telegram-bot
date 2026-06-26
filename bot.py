@@ -1,7 +1,8 @@
 import os
-import json
 import logging
 import requests
+import time
+from pymongo import MongoClient
 import google.generativeai as genai
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -15,7 +16,13 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 IDPAY_API_KEY = os.environ.get("IDPAY_API_KEY")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+MONGODB_URI = os.environ.get("MONGODB_URI")
 IDPAY_CALLBACK_URL = os.environ.get("CALLBACK_URL", "https://yourdomain.com/callback")
+
+# اتصال به MongoDB
+client = MongoClient(MONGODB_URI)
+db = client["telegram_bot"]
+users_col = db["users"]
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-2.5-flash-lite")
@@ -23,7 +30,6 @@ model = genai.GenerativeModel("gemini-2.5-flash-lite")
 SYSTEM_PROMPT = "تو یک متخصص تعبیر خواب هستی. فقط و فقط تعبیر خواب انجام می‌دی. خواب‌ها را بر اساس تعابیر اسلامی و سنتی تفسیر می‌کنی. اگه کسی چیز دیگه‌ای پرسید، مودبانه بگو که فقط تعبیر خواب بلدی. جواب‌هات رو به فارسی روان و کامل بده."
 
 FREE_CREDITS = 1
-DATA_FILE = "users.json"
 
 PACKAGES = [
     {"id": "1", "label": "۱ تعبیر — ۲۰,۰۰۰ تومان", "count": 1, "amount": 200000},
@@ -31,29 +37,18 @@ PACKAGES = [
     {"id": "3", "label": "۶ تعبیر — ۱۰۰,۰۰۰ تومان", "count": 6, "amount": 1000000},
 ]
 
-def load_users():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
+chat_sessions = {}
 
-def save_users(users):
-    try:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(users, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logging.error(f"خطا در ذخیره: {e}")
-
-def get_user(users, user_id):
+def get_user(user_id):
     uid = str(user_id)
-    if uid not in users:
-        users[uid] = {"credits": FREE_CREDITS, "pending": {}}
-    if "pending" not in users[uid]:
-        users[uid]["pending"] = {}
-    return users[uid]
+    user = users_col.find_one({"_id": uid})
+    if not user:
+        user = {"_id": uid, "credits": FREE_CREDITS, "pending": {}}
+        users_col.insert_one(user)
+    return user
+
+def update_user(user_id, data):
+    users_col.update_one({"_id": str(user_id)}, {"$set": data})
 
 def main_keyboard():
     keyboard = [
@@ -68,13 +63,8 @@ def package_keyboard():
     keyboard.append([KeyboardButton("🔙 بازگشت")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# نگه‌داری تاریخچه مکالمه در حافظه (نه فایل)
-chat_sessions = {}
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    users = load_users()
-    user = get_user(users, update.effective_user.id)
-    save_users(users)
+    user = get_user(update.effective_user.id)
     await update.message.reply_text(
         f"سلام {update.effective_user.first_name} عزیز! 🌙\n\n"
         f"به ربات تعبیر خواب خوش اومدی!\n"
@@ -86,8 +76,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
-    users = load_users()
-    user = get_user(users, user_id)
+    user = get_user(user_id)
 
     if text == "📖 درباره تعبیر خواب":
         await update.message.reply_text(
@@ -123,8 +112,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "➕ افزایش اعتبار":
         await update.message.reply_text(
-            "💰 *پکیج‌های اعتبار*\n\n"
-            "یکی از پکیج‌های زیر رو انتخاب کن:",
+            "💰 *پکیج‌های اعتبار*\n\nیکی از پکیج‌های زیر رو انتخاب کن:",
             parse_mode="Markdown",
             reply_markup=package_keyboard()
         )
@@ -142,10 +130,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "🔙 بازگشت":
-        await update.message.reply_text(
-            "به منو اصلی برگشتی 🏠",
-            reply_markup=main_keyboard()
-        )
+        await update.message.reply_text("به منو اصلی برگشتی 🏠", reply_markup=main_keyboard())
         return
 
     for pkg in PACKAGES:
@@ -158,7 +143,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
             try:
-                import time
                 response = requests.post(
                     "https://api.idpay.ir/v1.1/payment",
                     headers={"X-API-KEY": IDPAY_API_KEY, "Content-Type": "application/json"},
@@ -171,8 +155,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 data = response.json()
                 if "link" in data:
-                    user["pending"][data.get("id", "")] = pkg["count"]
-                    save_users(users)
+                    update_user(user_id, {f"pending.{data.get('id','')}": pkg["count"]})
                     await update.message.reply_text(
                         f"✅ *لینک پرداخت:*\n\n{data['link']}\n\n"
                         f"پکیج: {pkg['label']}\n"
@@ -185,8 +168,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logging.error(f"IDPay error: {e}")
                 await update.message.reply_text(
-                    "مشکلی در اتصال به درگاه پرداخت پیش اومد.\n"
-                    "با پشتیبانی تماس بگیر: @mf1361",
+                    "مشکلی در اتصال به درگاه پرداخت پیش اومد.\nبا پشتیبانی تماس بگیر: @mf1361",
                     reply_markup=main_keyboard()
                 )
             return
@@ -202,24 +184,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     try:
-        # استفاده از چت ساده بدون تاریخچه JSON
         if user_id not in chat_sessions:
             chat_sessions[user_id] = []
-
         chat_sessions[user_id].append(f"کاربر: {text}")
-
         full_prompt = SYSTEM_PROMPT + "\n\n" + "\n".join(chat_sessions[user_id][-6:])
         response = model.generate_content(full_prompt)
         reply = response.text
-
         chat_sessions[user_id].append(f"ربات: {reply}")
 
-        user["credits"] -= 1
-        save_users(users)
+        new_credits = user["credits"] - 1
+        update_user(user_id, {"credits": new_credits})
 
         await update.message.reply_text(
             f"🔮 *تعبیر خواب:*\n\n{reply}\n\n"
-            f"💳 اعتبار باقی‌مانده: {user['credits']} تعبیر",
+            f"💳 اعتبار باقی‌مانده: {new_credits} تعبیر",
             parse_mode="Markdown",
             reply_markup=main_keyboard()
         )
@@ -237,15 +215,14 @@ async def add_credit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         target_id = str(context.args[0])
         amount = int(context.args[1])
-        users = load_users()
-        user = get_user(users, target_id)
-        user["credits"] += amount
-        save_users(users)
-        await update.message.reply_text(f"✅ {amount} اعتبار به کاربر {target_id} اضافه شد.")
+        user = get_user(target_id)
+        new_credits = user["credits"] + amount
+        update_user(target_id, {"credits": new_credits})
+        await update.message.reply_text(f"✅ {amount} اعتبار به کاربر {target_id} اضافه شد.\nاعتبار جدید: {new_credits}")
         try:
             await context.bot.send_message(
                 chat_id=int(target_id),
-                text=f"🎉 {amount} اعتبار تعبیر خواب به حساب شما اضافه شد!\nاعتبار فعلی: {user['credits']} تعبیر"
+                text=f"🎉 {amount} اعتبار تعبیر خواب به حساب شما اضافه شد!\nاعتبار فعلی: {new_credits} تعبیر"
             )
         except:
             pass
@@ -256,10 +233,10 @@ async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ شما ادمین نیستید.")
         return
-    users = load_users()
-    text = f"👥 تعداد کاربران: {len(users)}\n\n"
-    for uid, data in list(users.items())[:20]:
-        text += f"🆔 {uid} — اعتبار: {data['credits']}\n"
+    count = users_col.count_documents({})
+    text = f"👥 تعداد کاربران: {count}\n\n"
+    for u in users_col.find().limit(20):
+        text += f"🆔 {u['_id']} — اعتبار: {u['credits']}\n"
     await update.message.reply_text(text)
 
 def main():
