@@ -43,6 +43,10 @@ def get_user(user_id):
     uid = str(user_id)
     user = users_col.find_one({"_id": uid})
     if not user:
+        # چک کن رکورد تکراری نباشه
+        existing = users_col.find_one({"_id": {"$regex": f"^{uid}"}})
+        if existing:
+            return existing
         user = {"_id": uid, "credits": FREE_CREDITS, "pending": {}}
         users_col.insert_one(user)
     return user
