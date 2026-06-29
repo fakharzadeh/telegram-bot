@@ -194,7 +194,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_keyboard()
         )
     except Exception as e:
-        logging.error("خطا: " + str(e))
+        import traceback
+        logging.error("خطا: " + str(e) + "\n" + traceback.format_exc())
         await update.message.reply_text(
             "متاسفم، مشکلی پیش اومد. دوباره امتحان کن.",
             reply_markup=main_keyboard()
