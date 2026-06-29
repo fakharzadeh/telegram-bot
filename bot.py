@@ -64,13 +64,13 @@ def package_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
-    await update.message.reply_text(
-        "سلام " + update.effective_user.first_name + " عزیز!\n\n"
-        "به ربات تفسیر خواب خوش اومدی!\n"
-        "اعتبار فعلی شما: " + str(user['credits']) + " تعبیر\n\n"
-        "خوابت رو بنویس تا تفسیرش کنم",
-        reply_markup=main_keyboard()
-    )
+    footer = "\n\nاعتبار باقی‌مانده: " + str(new_credits) + " تعبیر"
+        chunks = [reply[i:i+3800] for i in range(0, len(reply), 3800)]
+        for i, chunk in enumerate(chunks):
+            if i == len(chunks) - 1:
+                await update.message.reply_text("تفسیر خواب:\n\n" + chunk + footer, reply_markup=main_keyboard())
+            else:
+                await update.message.reply_text("تفسیر خواب:\n\n" + chunk)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
