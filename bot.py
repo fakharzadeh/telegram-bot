@@ -2,15 +2,13 @@ import os
 import logging
 import requests
 import time
+import traceback
 from pymongo import MongoClient
 import google.generativeai as genai
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -51,7 +49,7 @@ def update_user(user_id, data):
 
 def main_keyboard():
     keyboard = [
-        [KeyboardButton("درباره تعبیر خواب  "), KeyboardButton("خواب جدید")],
+        [KeyboardButton("درباره تعبیر خواب"), KeyboardButton("خواب جدید")],
         [KeyboardButton("استعلام اعتبار"), KeyboardButton("افزایش اعتبار")],
         [KeyboardButton("پشتیبانی")]
     ]
@@ -62,15 +60,23 @@ def package_keyboard():
     keyboard.append([KeyboardButton("بازگشت")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
+async def send_long_message(update, text, reply_markup=None):
+    chunks = [text[i:i+3800] for i in range(0, len(text), 3800)]
+    for i, chunk in enumerate(chunks):
+        if i == len(chunks) - 1:
+            await update.message.reply_text(chunk, reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(chunk)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
-    footer = "\n\nاعتبار باقی‌مانده: " + str(new_credits) + " تعبیر"
-        chunks = [reply[i:i+3800] for i in range(0, len(reply), 3800)]
-        for i, chunk in enumerate(chunks):
-            if i == len(chunks) - 1:
-                await update.message.reply_text("تفسیر خواب:\n\n" + chunk + footer, reply_markup=main_keyboard())
-            else:
-                await update.message.reply_text("تفسیر خواب:\n\n" + chunk)
+    await update.message.reply_text(
+        "سلام " + update.effective_user.first_name + " عزیز!\n\n"
+        "به ربات تفسیر خواب خوش اومدی!\n"
+        "اعتبار فعلی شما: " + str(user['credits']) + " تعبیر\n\n"
+        "خوابت رو بنویس تا تفسیرش کنم",
+        reply_markup=main_keyboard()
+    )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -79,7 +85,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "درباره تعبیر خواب":
         await update.message.reply_text(
-            "درباره تفسیر خواب\n\n"
             "خواب‌ها انواع مختلف دارند.\n"
             "بعضی فقط مرور اتفاقات روزمره هستند و بعضی تشویش ذهن.\n"
             "برخی دیگر اما خواب‌های نمادینند که از عمق ضمیر ناخودآگاه انسان می‌آیند.\n"
@@ -94,10 +99,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "خواب جدید":
         if user_id in chat_sessions:
             del chat_sessions[user_id]
-        await update.message.reply_text(
-            "آماده‌ام! خواب جدیدت رو برام تعریف کن:",
-            reply_markup=main_keyboard()
-        )
+        await update.message.reply_text("آماده‌ام! خواب جدیدت رو برام تعریف کن:", reply_markup=main_keyboard())
         return
 
     if text == "استعلام اعتبار":
@@ -110,10 +112,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "افزایش اعتبار":
-        await update.message.reply_text(
-            "پکیج‌های اعتبار\n\nیکی از پکیج‌های زیر رو انتخاب کن:",
-            reply_markup=package_keyboard()
-        )
+        await update.message.reply_text("پکیج‌های اعتبار\n\nیکی از پکیج‌های زیر رو انتخاب کن:", reply_markup=package_keyboard())
         return
 
     if text == "پشتیبانی":
@@ -134,8 +133,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text == pkg["label"]:
             if not IDPAY_API_KEY:
                 await update.message.reply_text(
-                    "درگاه پرداخت هنوز راه‌اندازی نشده.\n"
-                    "برای خرید اعتبار با پشتیبانی تماس بگیر:\n@mf1361",
+                    "درگاه پرداخت هنوز راه‌اندازی نشده.\nبرای خرید اعتبار با پشتیبانی تماس بگیر:\n@mf1361",
                     reply_markup=main_keyboard()
                 )
                 return
@@ -155,25 +153,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     update_user(user_id, {"pending." + data.get("id", ""): pkg["count"]})
                     await update.message.reply_text(
                         "لینک پرداخت:\n\n" + data["link"] + "\n\n"
-                        "پکیج: " + pkg["label"] + "\n"
-                        "بعد از پرداخت، اعتبار به حسابت اضافه میشه.",
+                        "پکیج: " + pkg["label"] + "\nبعد از پرداخت، اعتبار به حسابت اضافه میشه.",
                         reply_markup=main_keyboard()
                     )
                 else:
                     raise Exception(str(data))
             except Exception as e:
                 logging.error("IDPay error: " + str(e))
-                await update.message.reply_text(
-                    "مشکلی در اتصال به درگاه پرداخت پیش اومد.\nبا پشتیبانی تماس بگیر: @mf1361",
-                    reply_markup=main_keyboard()
-                )
+                await update.message.reply_text("مشکلی در اتصال به درگاه پرداخت پیش اومد.\nبا پشتیبانی تماس بگیر: @mf1361", reply_markup=main_keyboard())
             return
 
     if user["credits"] <= 0:
-        await update.message.reply_text(
-            "اعتبار شما تموم شده!\n\nبرای ادامه، اعتبار بخر",
-            reply_markup=package_keyboard()
-        )
+        await update.message.reply_text("اعتبار شما تموم شده!\n\nبرای ادامه، اعتبار بخر", reply_markup=package_keyboard())
         return
 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
@@ -188,18 +179,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_sessions[user_id].append("ربات: " + reply)
         new_credits = user["credits"] - 1
         update_user(user_id, {"credits": new_credits})
-        await update.message.reply_text(
-            "تفسیر خواب:\n\n" + reply + "\n\n"
-            "اعتبار باقی‌مانده: " + str(new_credits) + " تعبیر",
-            reply_markup=main_keyboard()
-        )
+        footer = "\n\nاعتبار باقی‌مانده: " + str(new_credits) + " تعبیر"
+        chunks = [reply[i:i+3800] for i in range(0, len(reply), 3800)]
+        for i, chunk in enumerate(chunks):
+            if i == len(chunks) - 1:
+                await update.message.reply_text("تفسیر خواب:\n\n" + chunk + footer, reply_markup=main_keyboard())
+            else:
+                await update.message.reply_text("تفسیر خواب:\n\n" + chunk)
     except Exception as e:
-        import traceback
         logging.error("خطا: " + str(e) + "\n" + traceback.format_exc())
-        await update.message.reply_text(
-            "متاسفم، مشکلی پیش اومد. دوباره امتحان کن.",
-            reply_markup=main_keyboard()
-        )
+        await update.message.reply_text("متاسفم، مشکلی پیش اومد. دوباره امتحان کن.", reply_markup=main_keyboard())
 
 async def add_credit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -213,10 +202,7 @@ async def add_credit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_user(target_id, {"credits": new_credits})
         await update.message.reply_text(str(amount) + " اعتبار به کاربر " + target_id + " اضافه شد.\nاعتبار جدید: " + str(new_credits))
         try:
-            await context.bot.send_message(
-                chat_id=int(target_id),
-                text=str(amount) + " اعتبار تعبیر خواب به حساب شما اضافه شد!\nاعتبار فعلی: " + str(new_credits) + " تعبیر"
-            )
+            await context.bot.send_message(chat_id=int(target_id), text=str(amount) + " اعتبار به حساب شما اضافه شد!\nاعتبار فعلی: " + str(new_credits) + " تعبیر")
         except:
             pass
     except:
