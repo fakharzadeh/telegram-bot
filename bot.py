@@ -22,7 +22,7 @@ db = client["telegram_bot"]
 users_col = db["users"]
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.5-flash-lite")
+model = genai.GenerativeModel("gemini-1.5-flash-8b")
 
 SYSTEM_PROMPT = "تو یک متخصص تفسیر خواب هستی. فقط و فقط تفسیر خواب انجام میدی. خواب‌ها را بر اساس روان‌شناسی نمادین و تحلیل علمی تفسیر میکنی. نمادها، احساسات و تصاویر خواب را به صورت علمی و روان‌شناختی تحلیل کن. اگه کسی چیز دیگه‌ای پرسید، مودبانه بگو که فقط تفسیر خواب بلدی. جواب‌هات رو به فارسی روان و کامل بده."
 
